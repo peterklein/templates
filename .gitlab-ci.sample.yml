@@ -1,0 +1,73 @@
+stages:
+  - pre
+  - build
+  - deploy
+
+variables:
+  SSH_USER: <username>
+  SSH_HOST: <IP-Address>
+  STAGING_PATH: var/www/checklisten.online/client_staging
+  PRODUCTION_PATH: var/www/checklisten.online/client
+
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - node_modules/
+
+before_script:
+  - apt-get update -qq && apt-get install -y -qq sshpass
+  - "which ssh-agent || ( apt-get update -y && apt-get install openssh-client -y )"
+  - mkdir -p ~/.ssh
+  - eval $(ssh-agent -s)
+  - '[[ -f /.dockerenv ]] && echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config'
+
+Install dependencies:
+  image: node
+  stage: pre
+  script:
+    - npm install
+  artifacts:
+    paths:
+      - node_modules/
+
+Lint:
+  image: node
+  stage: pre
+  script:
+    - npm run lint
+
+Build app:
+  image: node
+  stage: build
+  only:
+    - branches
+  script:
+    - npm run build
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 2 days
+
+Deploy staging:
+  stage: deploy
+  image: ubuntu:18.04
+  script:
+    - sshpass -V
+    - export SSHPASS=$USER_PASSWORD
+    - sshpass -e scp -o stricthostkeychecking=no -r dist/* ${SSH_USER}@${SSH_HOST}:/${STAGING_PATH}
+    - ssh-add <(echo "$SSH_PRIVATE_KEY")
+    - ssh -o StrictHostKeyChecking=no ${SSH_USER}@${SSH_HOST} "ls -la /${STAGING_PATH};"
+    - sshpass -e stricthostkeychecking=no service nginx reload
+  only:
+    - development
+    - master
+
+Deploy production:
+  stage: deploy
+  image: ubuntu:18.04
+  script:
+    - sshpass -V
+    - export SSHPASS=$USER_PASSWORD
+    - sshpass -e scp -o stricthostkeychecking=no -r dist/* ${SSH_USER}@${SSH_HOST}:/${PRODUCTION_PATH}
+  only:
+    - master
